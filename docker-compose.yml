@@ -1,0 +1,30 @@
+# Runs the whole app with one command:
+#
+#     docker compose up --build
+#
+# Then open http://localhost:3000
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Let the browser-facing frontend call this API.
+      ALLOWED_ORIGINS: http://localhost:3000
+      DATABASE_URL: sqlite:////data/route53.db
+    volumes:
+      - db-data:/data
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  db-data:

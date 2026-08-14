@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# SQLite database (created on first run, not checked in)
+*.db
+*.db-journal
+
+# Node
+node_modules/
+.next/
+out/
+.env*.local
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
