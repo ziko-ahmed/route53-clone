@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { Column, DataTable } from "@/components/DataTable";
+import { Icon } from "@/components/Icon";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 import { Alert, Button, Field, SearchBox, TypeBadge, ZoneTypeBadge } from "@/components/ui";
@@ -250,7 +251,7 @@ export default function ZoneDetailPage() {
           </div>
           <div className="btn-row">
             <Button onClick={refreshAll} title="Refresh the list">
-              ⟳
+              <Icon name="refresh" />
             </Button>
             <Button
               variant="danger"

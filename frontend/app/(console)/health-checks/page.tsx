@@ -4,7 +4,7 @@ export default function HealthChecksPage() {
   return (
     <ComingSoon
       title="Health checks"
-      icon="💓"
+      icon="health"
       description="Health checks monitor your endpoints and fail traffic over when one stops responding. This section is a placeholder in this project."
     />
   );

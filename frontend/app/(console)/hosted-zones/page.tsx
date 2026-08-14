@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { Column, DataTable } from "@/components/DataTable";
+import { Icon } from "@/components/Icon";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 import { Alert, Button, Field, SearchBox, ZoneTypeBadge } from "@/components/ui";
@@ -144,7 +145,7 @@ export default function HostedZonesPage() {
           </div>
           <div className="btn-row">
             <Button onClick={load} title="Refresh the list">
-              ⟳
+              <Icon name="refresh" />
             </Button>
             <Button disabled={!selected} onClick={() => setDeleteOpen(true)} variant="danger">
               Delete zone

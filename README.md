@@ -7,6 +7,10 @@ saved to a SQLite database, so it is still there when you come back.
 It looks and behaves like the real AWS console, but it does not answer real DNS
 queries — the point is the interface and the data model, not running DNS.
 
+It runs on **SQLite locally** (nothing to install) and on **PostgreSQL when
+deployed** (so the hosted demo keeps its data). Which one is used is decided by
+a single environment variable; no code changes.
+
 ---
 
 ## Table of contents
@@ -120,8 +124,9 @@ least four characters.
 │  • lib/auth.tsx — who is │                                      │
 │    signed in             │                                      ▼
 │  • components/ — table,  │                           ┌──────────────────────┐
-│    modal, toasts, etc.   │                           │  SQLite (route53.db) │
-└──────────────────────────┘                           └──────────────────────┘
+│    modal, toasts, etc.   │                           │  SQLite locally,     │
+└──────────────────────────┘                           │  PostgreSQL deployed │
+                                                       └──────────────────────┘
 ```
 
 **How a request flows.** A page keeps its search, filter, sort and page number
@@ -145,7 +150,28 @@ returns one page of results plus the totals the UI needs.
 
 ## Database schema
 
-Two tables. A zone owns its records, and deleting a zone deletes them with it.
+### Which database
+
+One environment variable, `DATABASE_URL`, decides:
+
+| `DATABASE_URL`                        | What runs                              |
+| ------------------------------------- | -------------------------------------- |
+| *unset*                               | SQLite at `backend/route53.db`          |
+| `sqlite:////data/route53.db`          | SQLite at that path                     |
+| `postgresql://user:pw@host/db`        | That Postgres server                    |
+
+`backend/app/database.py` is the only file that knows the difference. It also
+rewrites the legacy `postgres://` prefix that most hosts hand out, since
+SQLAlchemy no longer accepts it, and turns on `pool_pre_ping` for Postgres so
+the first request after an idle period reconnects instead of failing.
+
+SQLite is the default because it makes local setup a `pip install` and nothing
+else, and because the assignment specifies it. Postgres is used for the hosted
+demo, where a local file would be wiped on every redeploy.
+
+### The tables
+
+Two of them. A zone owns its records, and deleting a zone deletes them with it.
 
 ### `hosted_zones`
 
@@ -156,7 +182,7 @@ Two tables. A zone owns its records, and deleting a zone deletes them with it.
 | `comment`      | TEXT         | Free-text description.                      |
 | `type`         | VARCHAR(16)  | `Public` or `Private`.                      |
 | `name_servers` | TEXT         | Four servers, newline separated.            |
-| `created_at`   | DATETIME     |                                             |
+| `created_at`   | TIMESTAMPTZ  | Timezone-aware, so both databases agree.    |
 
 Unique on `(name, type)` — you can have a public and a private zone for the
 same domain, which is exactly what Route 53 allows.
@@ -165,7 +191,7 @@ same domain, which is exactly what Route 53 allows.
 
 | Column           | Type         | Notes                                          |
 | ---------------- | ------------ | ---------------------------------------------- |
-| `id`             | INTEGER      | Primary key, auto-increment.                   |
+| `id`             | INTEGER      | Primary key, auto-increment (`SERIAL` on Postgres). |
 | `zone_id`        | VARCHAR(32)  | Foreign key to `hosted_zones.id`, cascade delete. Indexed. |
 | `name`           | VARCHAR(255) | Full record name, e.g. `www.example.com`. Indexed. |
 | `type`           | VARCHAR(10)  | `A`, `AAAA`, `CNAME`, … Indexed.               |
@@ -173,8 +199,8 @@ same domain, which is exactly what Route 53 allows.
 | `value`          | TEXT         | One or more values, newline separated.         |
 | `routing_policy` | VARCHAR(32)  | `Simple` for now.                              |
 | `is_system`      | BOOLEAN      | True for the NS and SOA records AWS creates. Those cannot be edited or deleted. |
-| `created_at`     | DATETIME     |                                                |
-| `updated_at`     | DATETIME     | Updated automatically on save.                 |
+| `created_at`     | TIMESTAMPTZ  |                                                |
+| `updated_at`     | TIMESTAMPTZ  | Updated automatically on save.                 |
 
 Unique on `(zone_id, name, type)` — the DNS rule that a name has at most one
 record of each type, enforced by the database rather than by application code.
@@ -296,19 +322,52 @@ shows what it points to. Deleting a whole zone additionally makes you type
 
 ## Deployment
 
-Frontend on Vercel, backend on Render. Both have a free tier.
+Three free services: **Neon** for the database, **Render** for the API,
+**Vercel** for the frontend.
+
+### Why not just SQLite on the server?
+
+Because it would not survive. Render's free web services cannot attach a
+persistent disk, so the container's filesystem is wiped on every redeploy —
+your zones and records would reset each time. Render's own free Postgres is no
+better for a take-home: it expires 30 days after creation, and a reviewer
+opening the link in week five would find a dead app.
+
+Neon's free plan has no expiry, so it is the one that fits. Its compute sleeps
+after about five minutes idle and wakes on the next query, which is why the
+backend uses `pool_pre_ping`.
+
+> Free tiers change often. Check the current terms on
+> [Neon's pricing page](https://neon.com/pricing) and
+> [Render's free tier docs](https://render.com/docs/free) before relying on
+> these details.
 
 ### 1. Push to GitHub
 
 ```bash
-git init
+git init -b main
 git add .
 git commit -m "Route 53 clone"
 git remote add origin https://github.com/<you>/route53-clone.git
 git push -u origin main
 ```
 
-### 2. Backend on Render
+### 2. Database on Neon
+
+1. Sign up at <https://neon.com> and create a project.
+2. Copy the connection string from the dashboard. It looks like:
+
+   ```
+   postgresql://user:password@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
+   ```
+
+3. Keep it somewhere safe for the next step. It contains a password, so it must
+   never be committed — that is why `render.yaml` marks it `sync: false`.
+
+You do not need to create any tables. The backend creates them on startup and
+adds the five sample zones if the database is empty.
+
+### 3. Backend on Render
 
 1. Go to <https://render.com> → **New** → **Web Service** → connect the repo.
 2. Render reads `render.yaml` and fills in the settings. If it does not:
@@ -316,35 +375,43 @@ git push -u origin main
    - Dockerfile path: `./backend/Dockerfile`
    - Docker context: `./backend`
    - Health check path: `/api/health`
-3. Add a **Disk** mounted at `/data`, 1 GB. Without it the database is wiped on
-   every deploy.
-4. Environment variables:
-   - `DATABASE_URL` = `sqlite:////data/route53.db`
-   - `ALLOWED_ORIGINS` = leave as a placeholder for now
-5. Deploy, then copy the URL, e.g. `https://route53-clone-api.onrender.com`.
-   Check `<that URL>/api/health` returns `{"status":"ok"}`.
+3. Set the environment variables:
+   - `DATABASE_URL` = the Neon string from step 2
+   - `ALLOWED_ORIGINS` = a placeholder for now, e.g. `http://localhost:3000`
+4. Deploy, then check `<your-render-url>/api/health` returns `{"status":"ok"}`.
 
-Note: free Render services sleep when idle, so the first request after a quiet
-spell takes 30–60 seconds.
+Free Render services sleep when idle, so the first request after a quiet spell
+takes 30–60 seconds. Worth mentioning to whoever reviews the demo.
 
-### 3. Frontend on Vercel
+### 4. Frontend on Vercel
 
 1. Go to <https://vercel.com> → **Add New** → **Project** → import the repo.
 2. Set **Root Directory** to `frontend`. Vercel detects Next.js by itself.
 3. Add an environment variable:
-   - `NEXT_PUBLIC_API_URL` = your Render URL from step 2
-4. Deploy, then copy the URL, e.g. `https://route53-clone.vercel.app`.
+   - `NEXT_PUBLIC_API_URL` = your Render URL from step 3
+4. Deploy and copy the URL, e.g. `https://route53-clone.vercel.app`.
 
-### 4. Connect the two
+### 5. Connect the two
 
-Go back to Render, set `ALLOWED_ORIGINS` to your Vercel URL, and save. The
-service restarts. Without this the browser blocks every API call with a CORS
-error.
+Back in Render, set `ALLOWED_ORIGINS` to your Vercel URL and save. The service
+restarts. Without this the browser blocks every API call with a CORS error.
 
 Open the Vercel URL and sign in.
 
 > `NEXT_PUBLIC_API_URL` is read at build time, not at run time. If you change it
 > later, redeploy the frontend.
+
+### Running locally against Postgres
+
+Handy for checking the deployed setup before you push:
+
+```bash
+cd backend
+DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require" \
+  uvicorn app.main:app --reload --port 8000
+```
+
+Leave `DATABASE_URL` unset and you are back on SQLite.
 
 ---
 
@@ -355,7 +422,7 @@ route53-clone/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py          FastAPI app, CORS, startup
-│   │   ├── database.py      SQLite connection and session
+│   │   ├── database.py      Picks SQLite or Postgres from DATABASE_URL
 │   │   ├── models.py        The two tables
 │   │   ├── schemas.py       Request and response shapes
 │   │   ├── auth.py          Mocked sign-in (swap this for real auth)

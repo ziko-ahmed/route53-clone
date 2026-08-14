@@ -1,9 +1,20 @@
 /** Small display helpers used by more than one page. */
 
-/** "2026-08-14T09:12:00" -> "August 14, 2026, 09:12 (UTC)" */
+/**
+ * Turns a timestamp from the API into something readable in the user's
+ * own timezone, e.g. "August 14, 2026 at 09:12".
+ *
+ * The backend sends UTC either as "...T09:12:00+00:00" (Postgres) or as a
+ * bare "...T09:12:00" (SQLite). JavaScript reads a bare timestamp as local
+ * time, which would silently shift it, so we add the "Z" ourselves when
+ * there is no timezone on the end.
+ */
 export function formatDate(iso: string): string {
-  const date = new Date(iso.endsWith("Z") ? iso : `${iso}Z`);
+  const hasTimezone = /(Z|[+-]\d{2}:?\d{2})$/.test(iso);
+  const date = new Date(hasTimezone ? iso : `${iso}Z`);
+
   if (Number.isNaN(date.getTime())) return iso;
+
   return date.toLocaleString(undefined, {
     year: "numeric",
     month: "long",

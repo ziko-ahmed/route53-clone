@@ -3,6 +3,13 @@
 #     docker compose up --build
 #
 # Then open http://localhost:3000
+#
+# This uses SQLite in a named volume, so your data survives a restart without
+# needing a database server. To run against Postgres instead -- the same setup
+# the hosted demo uses -- put your connection string in a .env file next to
+# this one:
+#
+#     DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
 
 services:
   backend:
@@ -12,7 +19,8 @@ services:
     environment:
       # Let the browser-facing frontend call this API.
       ALLOWED_ORIGINS: http://localhost:3000
-      DATABASE_URL: sqlite:////data/route53.db
+      # Falls back to SQLite on a volume when DATABASE_URL is not set.
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////data/route53.db}
     volumes:
       - db-data:/data
 

@@ -47,7 +47,7 @@ class HostedZone(Base):
     # Stored as one string, newline separated, to keep the schema simple.
     name_servers: Mapped[str] = mapped_column(Text, default="")
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     records: Mapped[list["DnsRecord"]] = relationship(
         back_populates="zone",
@@ -82,8 +82,10 @@ class DnsRecord(Base):
     # We mark those rows so the API can refuse to remove them.
     is_system: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
 
     zone: Mapped[HostedZone] = relationship(back_populates="records")
 
