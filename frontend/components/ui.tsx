@@ -6,7 +6,7 @@
  * are generic pieces styled to look like the AWS console.
  */
 
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 
 /* ---------- button ---------- */
 
@@ -149,10 +149,13 @@ export function SearchBox({
   value,
   onChange,
   placeholder,
+  inputRef,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
+  /** Lets a page focus this box, e.g. from the "/" shortcut. */
+  inputRef?: RefObject<HTMLInputElement | null>;
 }) {
   return (
     <div className="search">
@@ -163,6 +166,7 @@ export function SearchBox({
         </svg>
       </span>
       <input
+        ref={inputRef}
         className="input"
         type="search"
         value={value}

@@ -1,10 +1,10 @@
 # Deploys the backend on Render (https://render.com).
-# The frontend goes on Vercel -- see the Deployment section of README.md.
+# The frontend is deployed separately on Vercel.
 #
-# The database is NOT defined here. Render's free web services cannot attach
-# a persistent disk, and Render's own free Postgres expires 30 days after it
-# is created. So the database lives on Neon instead, and you paste its
-# connection string into DATABASE_URL in the Render dashboard.
+# The database is NOT defined here. Render's free web services cannot attach a
+# persistent disk, and Render's own free Postgres expires 30 days after it is
+# created, so the database is hosted separately. Paste its connection string
+# into DATABASE_URL in the Render dashboard -- never commit it to this file.
 
 services:
   - type: web

@@ -6,7 +6,7 @@
  */
 
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { Column, DataTable } from "@/components/DataTable";
@@ -17,8 +17,10 @@ import { Alert, Button, Field, SearchBox, TypeBadge, ZoneTypeBadge } from "@/com
 import { api, ApiError } from "@/lib/api";
 import { formatDate, humanTtl } from "@/lib/format";
 import { useToast } from "@/lib/toast";
-import type { DnsRecord, HostedZone, RecordType } from "@/lib/types";
+import type { DnsRecord, HostedZone, ImportResult, RecordType } from "@/lib/types";
+import { downloadText } from "@/lib/download";
 import { useDebounced } from "@/lib/useDebounced";
+import { useShortcuts, type Shortcut } from "@/lib/useShortcuts";
 
 // SOA is created automatically and cannot be added by hand, but it can be
 // filtered for, so it appears in the filter list only.
@@ -46,11 +48,23 @@ export default function ZoneDetailPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  const [selected, setSelected] = useState<DnsRecord | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // Bulk operations mean several records can be selected at once. Most
+  // actions still act on exactly one, so `only` is the convenient shortcut.
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const only =
+    selectedIds.length === 1
+      ? (records.find((r) => r.id === selectedIds[0]) ?? null)
+      : null;
+
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<DnsRecord | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [detailsRecord, setDetailsRecord] = useState<DnsRecord | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Load the zone itself and the list of record types once.
   useEffect(() => {
@@ -90,7 +104,7 @@ export default function ZoneDetailPage() {
 
   useEffect(() => {
     setPage(1);
-    setSelected(null);
+    setSelectedIds([]);
   }, [search, typeFilter, pageSize]);
 
   /** Refresh both the record list and the zone's record count. */
@@ -98,6 +112,45 @@ export default function ZoneDetailPage() {
     await loadRecords();
     api.getZone(zoneId).then(setZone).catch(() => undefined);
   }
+
+  async function handleExport(format: "bind" | "json") {
+    if (!zone) return;
+    setExporting(true);
+    try {
+      const text = await api.exportZone(zone.id, format);
+      downloadText(
+        format === "bind" ? `${zone.name}.zone` : `${zone.name}.json`,
+        text,
+        format === "bind" ? "text/plain" : "application/json",
+      );
+      toast.success(`Exported ${zone.name} as ${format.toUpperCase()}.`);
+    } catch (problem) {
+      toast.error(problem instanceof Error ? problem.message : "Could not export the zone.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const shortcuts = useMemo<Shortcut[]>(
+    () => [
+      { key: "/", description: "Focus search", run: () => searchRef.current?.focus() },
+      {
+        key: "c",
+        description: "Create record",
+        run: () => {
+          setEditing(null);
+          setFormOpen(true);
+        },
+      },
+      { key: "r", description: "Refresh", run: () => loadRecords() },
+      { key: "i", description: "Import zone file", run: () => setImportOpen(true) },
+      { key: "e", description: "Export zone", run: () => handleExport("bind") },
+    ],
+    // handleExport depends only on `zone`, which is captured fresh each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [loadRecords, zone],
+  );
+  useShortcuts(shortcuts);
 
   function toggleSort(key: string) {
     if (key === sort) setOrder(order === "asc" ? "desc" : "asc");
@@ -139,8 +192,7 @@ export default function ZoneDetailPage() {
           }}
           onClick={(event) => {
             event.stopPropagation();
-            setSelected(record);
-            setDetailsOpen(true);
+            setDetailsRecord(record);
           }}
         >
           {record.name}
@@ -250,22 +302,32 @@ export default function ZoneDetailPage() {
             </h2>
           </div>
           <div className="btn-row">
-            <Button onClick={refreshAll} title="Refresh the list">
+            <Button onClick={refreshAll} title="Refresh the list (r)">
               <Icon name="refresh" />
+            </Button>
+            <Button onClick={() => setImportOpen(true)} title="Import a zone file (i)">
+              <Icon name="upload" /> Import
+            </Button>
+            <Button
+              onClick={() => handleExport("bind")}
+              loading={exporting}
+              title="Download as a BIND zone file (e)"
+            >
+              <Icon name="download" /> Export
             </Button>
             <Button
               variant="danger"
-              disabled={!selected || selected.is_system}
-              title={selected?.is_system ? "Default records cannot be deleted" : undefined}
+              disabled={!only || only.is_system}
+              title={only?.is_system ? "Default records cannot be deleted" : undefined}
               onClick={() => setDeleteOpen(true)}
             >
               Delete record
             </Button>
             <Button
-              disabled={!selected || selected.is_system}
-              title={selected?.is_system ? "Default records cannot be edited" : undefined}
+              disabled={!only || only.is_system}
+              title={only?.is_system ? "Default records cannot be edited" : undefined}
               onClick={() => {
-                setEditing(selected);
+                setEditing(only);
                 setFormOpen(true);
               }}
             >
@@ -273,6 +335,7 @@ export default function ZoneDetailPage() {
             </Button>
             <Button
               variant="primary"
+              title="Shortcut: c"
               onClick={() => {
                 setEditing(null);
                 setFormOpen(true);
@@ -283,8 +346,21 @@ export default function ZoneDetailPage() {
           </div>
         </div>
 
+        {selectedIds.length > 1 && (
+          <div className="bulk-bar">
+            <span className="bulk-count">{selectedIds.length} records selected</span>
+            <Button variant="danger" small onClick={() => setBulkDeleteOpen(true)}>
+              <Icon name="trash" /> Delete selected
+            </Button>
+            <Button variant="plain" small onClick={() => setSelectedIds([])}>
+              Clear selection
+            </Button>
+          </div>
+        )}
+
         <div className="toolbar">
           <SearchBox
+            inputRef={searchRef}
             value={searchInput}
             onChange={setSearchInput}
             placeholder="Find records by name or value"
@@ -325,10 +401,21 @@ export default function ZoneDetailPage() {
           sort={sort}
           order={order}
           onSortChange={toggleSort}
-          selectedKey={selected ? String(selected.id) : null}
-          onSelect={(record) =>
-            setSelected(selected?.id === record.id ? null : record)
-          }
+          selection={{
+            mode: "multi",
+            selected: selectedIds.map(String),
+            onToggle: (record) =>
+              setSelectedIds((current) =>
+                current.includes(record.id)
+                  ? current.filter((id) => id !== record.id)
+                  : [...current, record.id],
+              ),
+            onToggleAll: () => {
+              const pageIds = records.map((r) => r.id);
+              const allOnPage = pageIds.every((id) => selectedIds.includes(id));
+              setSelectedIds(allOnPage ? [] : pageIds);
+            },
+          }}
           empty={{
             title: search || typeFilter ? "No matching records" : "No records yet",
             description:
@@ -361,6 +448,35 @@ export default function ZoneDetailPage() {
         )}
       </div>
 
+      <ImportDialog
+        open={importOpen}
+        zone={zone}
+        onClose={() => setImportOpen(false)}
+        onImported={(result) => {
+          toast.success(
+            `Imported ${result.created} new and updated ${result.updated} record(s).`,
+          );
+          setSelectedIds([]);
+          refreshAll();
+        }}
+        onExportJson={() => handleExport("json")}
+      />
+
+      <BulkDeleteDialog
+        open={bulkDeleteOpen}
+        zoneId={zoneId}
+        records={records.filter((r) => selectedIds.includes(r.id))}
+        onClose={() => setBulkDeleteOpen(false)}
+        onDone={(deleted, skipped) => {
+          toast.success(`Deleted ${deleted} record(s).`);
+          skipped.forEach((note) => toast.info(note));
+          setBulkDeleteOpen(false);
+          setSelectedIds([]);
+          refreshAll();
+        }}
+        onError={(message) => toast.error(message)}
+      />
+
       <RecordFormDialog
         open={formOpen}
         zone={zone}
@@ -372,7 +488,7 @@ export default function ZoneDetailPage() {
             wasEdit ? `Record ${record.name} updated.` : `Record ${record.name} created.`,
           );
           setFormOpen(false);
-          setSelected(null);
+          setSelectedIds([]);
           refreshAll();
         }}
         onError={(message) => toast.error(message)}
@@ -380,21 +496,21 @@ export default function ZoneDetailPage() {
 
       <DeleteRecordDialog
         open={deleteOpen}
-        record={selected}
+        record={only}
         onClose={() => setDeleteOpen(false)}
         onDeleted={(name) => {
           toast.success(`Record ${name} deleted.`);
           setDeleteOpen(false);
-          setSelected(null);
+          setSelectedIds([]);
           refreshAll();
         }}
         onError={(message) => toast.error(message)}
       />
 
       <RecordDetailsDialog
-        open={detailsOpen}
-        record={selected}
-        onClose={() => setDetailsOpen(false)}
+        open={detailsRecord !== null}
+        record={detailsRecord}
+        onClose={() => setDetailsRecord(null)}
       />
     </>
   );
@@ -715,6 +831,274 @@ function RecordDetailsDialog({
           <div className="kv-label">Last updated</div>
           <div className="kv-value">{formatDate(record.updated_at)}</div>
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- import a zone file ---------- */
+
+const EXAMPLE_ZONE = `$ORIGIN example.com.
+$TTL 300
+@       300  IN  A      192.0.2.1
+www     300  IN  CNAME  example.com.
+@      3600  IN  MX     10 mail.example.com.`;
+
+function ImportDialog({
+  open,
+  zone,
+  onClose,
+  onImported,
+  onExportJson,
+}: {
+  open: boolean;
+  zone: HostedZone | null;
+  onClose: () => void;
+  onImported: (result: ImportResult) => void;
+  onExportJson: () => void;
+}) {
+  const [content, setContent] = useState("");
+  const [overwrite, setOverwrite] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<ImportResult | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setContent("");
+      setOverwrite(false);
+      setError("");
+      setResult(null);
+    }
+  }, [open]);
+
+  async function readFile(file: File) {
+    setContent(await file.text());
+    setError("");
+  }
+
+  async function submit() {
+    if (!zone) return;
+    if (!content.trim()) {
+      setError("Paste a zone file, or drop one in the box above.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const outcome = await api.importZoneFile(zone.id, content, overwrite);
+      setResult(outcome);
+      onImported(outcome);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "Could not import the file.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!zone) return null;
+
+  return (
+    <Modal
+      title={`Import records into ${zone.name}`}
+      open={open}
+      onClose={onClose}
+      wide
+      footer={
+        result ? (
+          <Button variant="primary" onClick={onClose}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button variant="plain" onClick={onExportJson}>
+              Export as JSON instead
+            </Button>
+            <Button variant="plain" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submit} loading={busy}>
+              Import records
+            </Button>
+          </>
+        )
+      }
+    >
+      {result ? (
+        <>
+          <div className="import-summary">
+            <div className="import-stat">
+              <b>{result.created}</b> created
+            </div>
+            <div className="import-stat">
+              <b>{result.updated}</b> updated
+            </div>
+            <div className="import-stat">
+              <b>{result.skipped}</b> skipped
+            </div>
+          </div>
+          {result.warnings.length > 0 && (
+            <>
+              <p>
+                <strong>{result.warnings.length} line(s) needed attention:</strong>
+              </p>
+              <ul className="warning-list">
+                {result.warnings.map((warning, index) => (
+                  <li key={index}>{warning}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          {error && <Alert kind="error">{error}</Alert>}
+
+          <div
+            className={dragging ? "drop-zone dragging" : "drop-zone"}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragging(false);
+              const file = event.dataTransfer.files[0];
+              if (file) readFile(file);
+            }}
+          >
+            Drop a <code>.zone</code> or <code>.txt</code> file here, or{" "}
+            <label style={{ color: "var(--link)", cursor: "pointer" }}>
+              choose a file
+              <input
+                type="file"
+                accept=".zone,.txt,.db,text/plain"
+                style={{ display: "none" }}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) readFile(file);
+                }}
+              />
+            </label>
+          </div>
+
+          <Field
+            label="Zone file contents"
+            htmlFor="import-content"
+            hint="Standard BIND format. Unsupported lines are reported rather than failing the whole import."
+          >
+            <textarea
+              id="import-content"
+              className="textarea"
+              style={{ minHeight: 170 }}
+              value={content}
+              placeholder={EXAMPLE_ZONE}
+              onChange={(event) => setContent(event.target.value)}
+            />
+          </Field>
+
+          <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <input
+              type="checkbox"
+              checked={overwrite}
+              style={{ marginTop: 3 }}
+              onChange={(event) => setOverwrite(event.target.checked)}
+            />
+            <span>
+              <strong>Overwrite existing records</strong>
+              <br />
+              <span className="muted">
+                Off by default: a record that already exists is left alone and reported.
+                The default NS and SOA records are never touched.
+              </span>
+            </span>
+          </label>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+/* ---------- delete several records at once ---------- */
+
+function BulkDeleteDialog({
+  open,
+  zoneId,
+  records,
+  onClose,
+  onDone,
+  onError,
+}: {
+  open: boolean;
+  zoneId: string;
+  records: DnsRecord[];
+  onClose: () => void;
+  onDone: (deleted: number, skipped: string[]) => void;
+  onError: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const protectedCount = records.filter((r) => r.is_system).length;
+
+  async function submit() {
+    setBusy(true);
+    try {
+      const outcome = await api.bulkDeleteRecords(
+        zoneId,
+        records.map((r) => r.id),
+      );
+      onDone(outcome.deleted, outcome.skipped);
+    } catch (problem) {
+      onError(problem instanceof Error ? problem.message : "Could not delete the records.");
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Delete ${records.length} records?`}
+      open={open}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="plain" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={submit} loading={busy}>
+            Delete {records.length - protectedCount} records
+          </Button>
+        </>
+      }
+    >
+      <Alert kind="error">This cannot be undone.</Alert>
+
+      {protectedCount > 0 && (
+        <p>
+          {protectedCount} default record(s) are in your selection. Those are managed by
+          Route 53 and will be kept.
+        </p>
+      )}
+
+      <div className="table-scroll" style={{ maxHeight: 240, overflowY: "auto" }}>
+        <table className="data">
+          <tbody>
+            {records.map((record) => (
+              <tr key={record.id}>
+                <td>{record.name}</td>
+                <td>
+                  <TypeBadge type={record.type} />
+                </td>
+                <td className="muted">
+                  {record.is_system ? "kept" : "will be deleted"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </Modal>
   );

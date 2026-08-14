@@ -20,8 +20,8 @@ a single environment variable; no code changes.
 3. [Architecture](#architecture)
 4. [Database schema](#database-schema)
 5. [API overview](#api-overview)
-6. [Design notes](#design-notes)
-7. [Deployment](#deployment)
+6. [Bonus features](#bonus-features)
+7. [Design notes](#design-notes)
 8. [Project structure](#project-structure)
 
 ---
@@ -250,6 +250,15 @@ Authorization: Bearer <token>
 | PUT    | `/api/zones/{id}/records/{recordId}`    | Update TTL and value                     |
 | DELETE | `/api/zones/{id}/records/{recordId}`    | Delete                                   |
 
+### Import, export and bulk operations
+
+| Method | Path                                    | What it does                                     |
+| ------ | --------------------------------------- | ------------------------------------------------ |
+| POST   | `/api/zones/{id}/import`                | Read a BIND zone file. `{content, overwrite}` → counts and warnings |
+| GET    | `/api/zones/{id}/export?format=bind`    | Download the zone as a BIND file                 |
+| GET    | `/api/zones/{id}/export?format=json`    | The same data as JSON                            |
+| POST   | `/api/zones/{id}/records/bulk-delete`   | Delete many at once. `{ids: [...]}` → `{deleted, skipped}` |
+
 ### Meta
 
 | Method | Path                 | What it does                                    |
@@ -285,6 +294,85 @@ Full interactive docs are generated from the code at
 
 ---
 
+## Bonus features
+
+All four optional items from the brief are implemented.
+
+### Import and export BIND zone files
+
+A BIND zone file is the plain-text format DNS has used for decades, and it is
+what most registrars hand you when you export a domain. **Import** on a zone
+page takes one by paste, file picker or drag-and-drop.
+
+The parser in `backend/app/bind.py` handles the awkward parts of the format:
+
+- `@` meaning the zone's own domain, and relative names like `www`
+- an empty name column meaning "same owner as the line above"
+- optional TTL and class columns, in either order
+- records split across lines with `( )`, such as SOA
+- `;` comments, including semicolons that appear inside quoted TXT values
+
+Two things it does deliberately:
+
+- **A bad line is a warning, not a failure.** Importing 40 of 42 records and
+  reporting the other two beats rejecting the file. The summary shows counts
+  for created, updated and skipped, plus a note for every line that needed
+  attention.
+- **Repeated names merge.** A zone file lists two IP addresses as two lines;
+  in DNS that is one record with two values, so they are combined into a
+  single record on the way in.
+
+Existing records are left alone unless you tick "overwrite", and the default
+NS and SOA records are never touched.
+
+**Export** downloads the zone as a `.zone` file, or as JSON. Exporting a zone
+and importing it into an empty one reproduces it exactly — there is a test for
+that round trip.
+
+### Bulk operations
+
+Records have checkboxes and a select-all box in the header, which shows a
+dash when only some rows on the page are selected. Selecting more than one
+reveals a bar with **Delete selected**.
+
+The confirmation lists every record and marks which ones will survive:
+protected NS and SOA records are reported back rather than failing the whole
+request, so "select all, delete" does the sensible thing instead of erroring.
+
+### Dark mode
+
+A toggle in the top bar, or press `d`.
+
+Every colour in the app is a CSS variable declared in one `:root` block, so
+dark mode is a second block that redefines those variables — no rule anywhere
+else in the stylesheet needed a dark version.
+
+If you have never chosen, it follows your operating system setting and keeps
+following it until you pick one, at which point your choice is remembered.
+A small script runs before the first paint so dark mode never flashes white
+on load.
+
+### Keyboard shortcuts
+
+Press `?` for the list, or use the keyboard button in the top bar.
+
+| Key   | Does                                              |
+| ----- | ------------------------------------------------- |
+| `/`   | Jump to the search box                            |
+| `c`   | Create a hosted zone, or a record inside a zone   |
+| `r`   | Refresh the list                                  |
+| `i`   | Import a zone file (inside a zone)                |
+| `e`   | Export the zone (inside a zone)                   |
+| `d`   | Toggle dark mode                                  |
+| `?`   | Show the shortcut list                            |
+| `Esc` | Close a dialog                                    |
+
+Shortcuts are ignored while you are typing in a field, so searching for
+"create" does not fire the create shortcut five times, and any keystroke with
+Cmd, Ctrl or Alt is left to the browser.
+
+---
+
 ## Design notes
 
 **Matching the AWS look.** The colours, spacing, rounded containers and pill
@@ -315,103 +403,6 @@ shows what it points to. Deleting a whole zone additionally makes you type
 - **Alias records and non-simple routing policies.** The column exists and every
   record reads `Simple`, so weighted and latency routing could be added without
   a schema migration.
-- **Bonus features.** BIND import/export, dark mode, keyboard shortcuts and bulk
-  operations were listed as optional and are not built.
-
----
-
-## Deployment
-
-Three free services: **Neon** for the database, **Render** for the API,
-**Vercel** for the frontend.
-
-### Why not just SQLite on the server?
-
-Because it would not survive. Render's free web services cannot attach a
-persistent disk, so the container's filesystem is wiped on every redeploy —
-your zones and records would reset each time. Render's own free Postgres is no
-better for a take-home: it expires 30 days after creation, and a reviewer
-opening the link in week five would find a dead app.
-
-Neon's free plan has no expiry, so it is the one that fits. Its compute sleeps
-after about five minutes idle and wakes on the next query, which is why the
-backend uses `pool_pre_ping`.
-
-> Free tiers change often. Check the current terms on
-> [Neon's pricing page](https://neon.com/pricing) and
-> [Render's free tier docs](https://render.com/docs/free) before relying on
-> these details.
-
-### 1. Push to GitHub
-
-```bash
-git init -b main
-git add .
-git commit -m "Route 53 clone"
-git remote add origin https://github.com/<you>/route53-clone.git
-git push -u origin main
-```
-
-### 2. Database on Neon
-
-1. Sign up at <https://neon.com> and create a project.
-2. Copy the connection string from the dashboard. It looks like:
-
-   ```
-   postgresql://user:password@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
-   ```
-
-3. Keep it somewhere safe for the next step. It contains a password, so it must
-   never be committed — that is why `render.yaml` marks it `sync: false`.
-
-You do not need to create any tables. The backend creates them on startup and
-adds the five sample zones if the database is empty.
-
-### 3. Backend on Render
-
-1. Go to <https://render.com> → **New** → **Web Service** → connect the repo.
-2. Render reads `render.yaml` and fills in the settings. If it does not:
-   - Runtime: **Docker**
-   - Dockerfile path: `./backend/Dockerfile`
-   - Docker context: `./backend`
-   - Health check path: `/api/health`
-3. Set the environment variables:
-   - `DATABASE_URL` = the Neon string from step 2
-   - `ALLOWED_ORIGINS` = a placeholder for now, e.g. `http://localhost:3000`
-4. Deploy, then check `<your-render-url>/api/health` returns `{"status":"ok"}`.
-
-Free Render services sleep when idle, so the first request after a quiet spell
-takes 30–60 seconds. Worth mentioning to whoever reviews the demo.
-
-### 4. Frontend on Vercel
-
-1. Go to <https://vercel.com> → **Add New** → **Project** → import the repo.
-2. Set **Root Directory** to `frontend`. Vercel detects Next.js by itself.
-3. Add an environment variable:
-   - `NEXT_PUBLIC_API_URL` = your Render URL from step 3
-4. Deploy and copy the URL, e.g. `https://route53-clone.vercel.app`.
-
-### 5. Connect the two
-
-Back in Render, set `ALLOWED_ORIGINS` to your Vercel URL and save. The service
-restarts. Without this the browser blocks every API call with a CORS error.
-
-Open the Vercel URL and sign in.
-
-> `NEXT_PUBLIC_API_URL` is read at build time, not at run time. If you change it
-> later, redeploy the frontend.
-
-### Running locally against Postgres
-
-Handy for checking the deployed setup before you push:
-
-```bash
-cd backend
-DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require" \
-  uvicorn app.main:app --reload --port 8000
-```
-
-Leave `DATABASE_URL` unset and you are back on SQLite.
 
 ---
 
@@ -427,11 +418,13 @@ route53-clone/
 │   │   ├── schemas.py       Request and response shapes
 │   │   ├── auth.py          Mocked sign-in (swap this for real auth)
 │   │   ├── dns_rules.py     Record types and their validation
+│   │   ├── bind.py          BIND zone file parser and generator
 │   │   ├── seed.py          Sample data on first run
 │   │   └── routers/
 │   │       ├── auth.py
 │   │       ├── zones.py
-│   │       └── records.py
+│   │       ├── records.py
+│   │       └── transfer.py
 │   ├── requirements.txt
 │   └── Dockerfile
 │
@@ -446,8 +439,8 @@ route53-clone/
 │   │       ├── hosted-zones/[zoneId]/page.tsx
 │   │       └── dashboard, traffic-policies, health-checks,
 │   │           resolver, profiles   (Coming soon pages)
-│   ├── components/                  Table, modal, pagination, nav, UI bits
-│   ├── lib/                         API client, auth, toasts, helpers
+│   ├── components/                  Table, modal, pagination, nav, icons, UI bits
+│   ├── lib/                         API client, auth, toasts, theme, shortcuts
 │   └── Dockerfile
 │
 ├── docker-compose.yml

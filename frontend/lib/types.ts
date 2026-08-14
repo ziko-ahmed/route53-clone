@@ -41,3 +41,11 @@ export type Page<T> = {
   page_size: number;
   total_pages: number;
 };
+
+/** What the backend reports after reading a zone file. */
+export type ImportResult = {
+  created: number;
+  updated: number;
+  skipped: number;
+  warnings: string[];
+};

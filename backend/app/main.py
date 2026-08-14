@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .database import Base, SessionLocal, engine
 from .dns_rules import RECORD_TYPES
 from .routers import auth as auth_router
-from .routers import records, zones
+from .routers import records, transfer, zones
 from .seed import seed_if_empty
 
 app = FastAPI(
@@ -36,6 +36,7 @@ app.add_middleware(
 app.include_router(auth_router.router)
 app.include_router(zones.router)
 app.include_router(records.router)
+app.include_router(transfer.router)
 
 
 @app.on_event("startup")

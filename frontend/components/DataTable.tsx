@@ -3,9 +3,12 @@
 /**
  * A sortable, selectable table.
  *
- * You give it the rows and a description of the columns; it handles the
- * header, the sort arrows, the radio buttons for selection and the
- * loading / empty states. Both the zones page and the records page use it.
+ * You give it rows and a description of the columns; it handles the header,
+ * sort arrows, selection controls and the loading / empty states.
+ *
+ * Selection comes in two flavours, picked with the `selection` prop:
+ *   single -- radio buttons, for "act on one thing" pages like hosted zones
+ *   multi  -- checkboxes plus a select-all box, for bulk operations
  */
 
 import type { ReactNode } from "react";
@@ -13,15 +16,21 @@ import type { ReactNode } from "react";
 import { Empty, TableSkeleton } from "./ui";
 
 export type Column<T> = {
-  /** Column heading. */
   header: string;
-  /** How to draw one cell. */
   cell: (row: T) => ReactNode;
   /** If set, the heading becomes clickable and sorts by this backend field. */
   sortKey?: string;
-  /** Stops long values from wrapping (used for dates and TTLs). */
   nowrap?: boolean;
 };
+
+export type Selection<T> =
+  | { mode: "single"; selected: string | null; onSelect: (row: T) => void }
+  | {
+      mode: "multi";
+      selected: string[];
+      onToggle: (row: T) => void;
+      onToggleAll: () => void;
+    };
 
 export function DataTable<T>({
   rows,
@@ -31,8 +40,7 @@ export function DataTable<T>({
   sort,
   order,
   onSortChange,
-  selectedKey,
-  onSelect,
+  selection,
   empty,
 }: {
   rows: T[];
@@ -42,31 +50,63 @@ export function DataTable<T>({
   sort?: string;
   order?: "asc" | "desc";
   onSortChange?: (sortKey: string) => void;
-  /** Leave undefined to turn selection off. */
-  selectedKey?: string | null;
-  onSelect?: (row: T) => void;
+  selection?: Selection<T>;
   empty: { title: string; description: string; action?: ReactNode };
 }) {
-  const selectable = Boolean(onSelect);
-
   if (loading) return <TableSkeleton />;
 
   if (rows.length === 0) {
     return <Empty title={empty.title} description={empty.description} action={empty.action} />;
   }
 
+  const isSelected = (key: string) =>
+    selection?.mode === "single"
+      ? selection.selected === key
+      : selection?.mode === "multi"
+        ? selection.selected.includes(key)
+        : false;
+
+  const allSelected =
+    selection?.mode === "multi" &&
+    rows.length > 0 &&
+    rows.every((row) => selection.selected.includes(rowKey(row)));
+
+  const someSelected =
+    selection?.mode === "multi" &&
+    !allSelected &&
+    rows.some((row) => selection.selected.includes(rowKey(row)));
+
+  const handleRowClick = (row: T) => {
+    if (!selection) return;
+    if (selection.mode === "single") selection.onSelect(row);
+    else selection.onToggle(row);
+  };
+
   return (
     <div className="table-scroll">
       <table className="data">
         <thead>
           <tr>
-            {selectable && (
+            {selection && (
               <th className="col-select">
-                <span className="visually-hidden">Select</span>
+                {selection.mode === "multi" ? (
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    // "some but not all" shows the dash state
+                    ref={(node) => {
+                      if (node) node.indeterminate = Boolean(someSelected);
+                    }}
+                    onChange={selection.onToggleAll}
+                    aria-label="Select all rows on this page"
+                  />
+                ) : (
+                  <span className="visually-hidden">Select</span>
+                )}
               </th>
             )}
             {columns.map((column) => {
-              const isSorted = column.sortKey && column.sortKey === sort;
+              const sorted = column.sortKey && column.sortKey === sort;
               return (
                 <th
                   key={column.header}
@@ -77,11 +117,11 @@ export function DataTable<T>({
                       : undefined
                   }
                   aria-sort={
-                    isSorted ? (order === "desc" ? "descending" : "ascending") : undefined
+                    sorted ? (order === "desc" ? "descending" : "ascending") : undefined
                   }
                 >
                   {column.header}
-                  {isSorted && (
+                  {sorted && (
                     <span className="sort-arrow" aria-hidden="true">
                       {order === "desc" ? "▼" : "▲"}
                     </span>
@@ -94,20 +134,20 @@ export function DataTable<T>({
         <tbody>
           {rows.map((row) => {
             const key = rowKey(row);
-            const isSelected = selectedKey === key;
+            const selected = isSelected(key);
             return (
               <tr
                 key={key}
-                className={isSelected ? "selected" : undefined}
-                onClick={selectable ? () => onSelect?.(row) : undefined}
-                style={selectable ? { cursor: "pointer" } : undefined}
+                className={selected ? "selected" : undefined}
+                onClick={selection ? () => handleRowClick(row) : undefined}
+                style={selection ? { cursor: "pointer" } : undefined}
               >
-                {selectable && (
+                {selection && (
                   <td className="col-select">
                     <input
-                      type="radio"
-                      checked={isSelected}
-                      onChange={() => onSelect?.(row)}
+                      type={selection.mode === "multi" ? "checkbox" : "radio"}
+                      checked={selected}
+                      onChange={() => handleRowClick(row)}
                       aria-label={`Select ${key}`}
                     />
                   </td>

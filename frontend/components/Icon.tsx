@@ -46,6 +46,37 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="M16.2 9.4a6.5 6.5 0 10-1.3 4.6" />
     </>
   ),
+  sun: (
+    <>
+      <circle cx="10" cy="10" r="3.5" />
+      <path d="M10 1.5v2M10 16.5v2M3.9 3.9l1.4 1.4M14.7 14.7l1.4 1.4M1.5 10h2M16.5 10h2M3.9 16.1l1.4-1.4M14.7 5.3l1.4-1.4" />
+    </>
+  ),
+  moon: <path d="M16.5 11.8A7 7 0 018.2 3.5a7 7 0 108.3 8.3z" />,
+  upload: (
+    <>
+      <path d="M3 13v3.5h14V13" />
+      <path d="M10 13V3.5M6.5 7L10 3.5 13.5 7" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M3 13v3.5h14V13" />
+      <path d="M10 3.5V13M6.5 9.5L10 13l3.5-3.5" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M3.5 5h13M8 5V3.5h4V5M5 5l.8 11.5h8.4L15 5" />
+      <path d="M8.5 8v6M11.5 8v6" />
+    </>
+  ),
+  keyboard: (
+    <>
+      <rect x="1.5" y="5" width="17" height="10" rx="2" />
+      <path d="M5 8h.01M8 8h.01M11 8h.01M14 8h.01M5 11.5h.01M14 11.5h.01M8 11.5h4" />
+    </>
+  ),
   clock: (
     <>
       <circle cx="10" cy="10" r="7.5" />

@@ -1,6 +1,7 @@
 """DNS record endpoints, always scoped to one hosted zone."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -191,3 +192,55 @@ def delete_record(
 
     db.delete(record)
     db.commit()
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+class BulkDeleteResult(BaseModel):
+    deleted: int
+    # Records we refused to touch, with the reason, e.g.
+    # "The default NS record cannot be deleted."
+    skipped: list[str]
+
+
+@router.post("/bulk-delete", response_model=BulkDeleteResult)
+def bulk_delete_records(
+    zone_id: str,
+    body: BulkDeleteRequest,
+    db: Session = Depends(get_db),
+    user: User = auth.LoggedIn,
+):
+    """
+    Delete several records in one go.
+
+    Protected records are reported back rather than failing the whole
+    request, so selecting everything and hitting delete does the sensible
+    thing instead of erroring.
+    """
+    _zone_or_404(db, zone_id)
+
+    if not body.ids:
+        raise HTTPException(422, "No records were selected.")
+
+    records = db.scalars(
+        select(models.DnsRecord).where(
+            models.DnsRecord.zone_id == zone_id,
+            models.DnsRecord.id.in_(body.ids),
+        )
+    ).all()
+
+    found = {r.id for r in records}
+    skipped = [f"Record {i} was not found in this zone." for i in body.ids if i not in found]
+
+    deleted = 0
+    for record in records:
+        if record.is_system:
+            skipped.append(f"{record.name} ({record.type}) is a default record and was kept.")
+            continue
+        db.delete(record)
+        deleted += 1
+
+    db.commit()
+    return BulkDeleteResult(deleted=deleted, skipped=skipped)

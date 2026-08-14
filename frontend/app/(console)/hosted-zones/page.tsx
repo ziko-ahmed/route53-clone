@@ -8,7 +8,7 @@
  */
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { Column, DataTable } from "@/components/DataTable";
@@ -21,6 +21,7 @@ import { formatDate } from "@/lib/format";
 import { useToast } from "@/lib/toast";
 import type { HostedZone } from "@/lib/types";
 import { useDebounced } from "@/lib/useDebounced";
+import { useShortcuts, type Shortcut } from "@/lib/useShortcuts";
 
 export default function HostedZonesPage() {
   const toast = useToast();
@@ -42,6 +43,7 @@ export default function HostedZonesPage() {
   const [pageSize, setPageSize] = useState(10);
 
   // --- selection and dialogs ---
+  const searchRef = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<HostedZone | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -79,6 +81,16 @@ export default function HostedZonesPage() {
     setPage(1);
     setSelected(null);
   }, [search, typeFilter, pageSize]);
+
+  const shortcuts = useMemo<Shortcut[]>(
+    () => [
+      { key: "/", description: "Focus search", run: () => searchRef.current?.focus() },
+      { key: "c", description: "Create hosted zone", run: () => setCreateOpen(true) },
+      { key: "r", description: "Refresh", run: () => load() },
+    ],
+    [load],
+  );
+  useShortcuts(shortcuts);
 
   function toggleSort(key: string) {
     if (key === sort) setOrder(order === "asc" ? "desc" : "asc");
@@ -153,7 +165,7 @@ export default function HostedZonesPage() {
             <Button disabled={!selected} onClick={() => setEditOpen(true)}>
               Edit
             </Button>
-            <Button variant="primary" onClick={() => setCreateOpen(true)}>
+            <Button variant="primary" onClick={() => setCreateOpen(true)} title="Shortcut: c">
               Create hosted zone
             </Button>
           </div>
@@ -161,6 +173,7 @@ export default function HostedZonesPage() {
 
         <div className="toolbar">
           <SearchBox
+            inputRef={searchRef}
             value={searchInput}
             onChange={setSearchInput}
             placeholder="Find hosted zones by domain name"
@@ -198,8 +211,11 @@ export default function HostedZonesPage() {
           sort={sort}
           order={order}
           onSortChange={toggleSort}
-          selectedKey={selected?.id ?? null}
-          onSelect={(zone) => setSelected(selected?.id === zone.id ? null : zone)}
+          selection={{
+            mode: "single",
+            selected: selected?.id ?? null,
+            onSelect: (zone) => setSelected(selected?.id === zone.id ? null : zone),
+          }}
           empty={{
             title: search || typeFilter ? "No matching hosted zones" : "No hosted zones",
             description:

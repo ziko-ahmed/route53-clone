@@ -5,7 +5,7 @@
  * the token handling and error handling in a single spot.
  */
 
-import type { DnsRecord, HostedZone, Page, RecordType, User } from "./types";
+import type { DnsRecord, HostedZone, ImportResult, Page, RecordType, User } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -144,6 +144,35 @@ export const api = {
 
   deleteRecord: (zoneId: string, recordId: number) =>
     request<void>(`/api/zones/${zoneId}/records/${recordId}`, { method: "DELETE" }),
+
+  // --- bulk operations ---
+  bulkDeleteRecords: (zoneId: string, ids: number[]) =>
+    request<{ deleted: number; skipped: string[] }>(
+      `/api/zones/${zoneId}/records/bulk-delete`,
+      { method: "POST", body: JSON.stringify({ ids }) },
+    ),
+
+  // --- import / export ---
+  importZoneFile: (zoneId: string, content: string, overwrite: boolean) =>
+    request<ImportResult>(`/api/zones/${zoneId}/import`, {
+      method: "POST",
+      body: JSON.stringify({ content, overwrite }),
+    }),
+
+  /**
+   * Exports are downloaded rather than parsed, so this bypasses request()
+   * and returns the raw text with the filename the browser should use.
+   */
+  exportZone: async (zoneId: string, format: "bind" | "json") => {
+    const token = getToken();
+    const response = await fetch(`${BASE}/api/zones/${zoneId}/export?format=${format}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, "Could not export this zone.");
+    }
+    return response.text();
+  },
 
   // --- meta ---
   recordTypes: () => request<RecordType[]>("/api/record-types"),

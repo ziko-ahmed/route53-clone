@@ -7,9 +7,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/lib/auth";
+import { useTheme } from "@/lib/theme";
 
-export function TopNav() {
+import { Icon } from "./Icon";
+
+export function TopNav({ onShowShortcuts }: { onShowShortcuts?: () => void }) {
   const { user, signOut } = useAuth();
+  const { theme, toggle } = useTheme();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -46,6 +50,24 @@ export function TopNav() {
         <span className="topnav-item topnav-sub" aria-hidden="true">
           Global
         </span>
+        {onShowShortcuts && (
+          <button
+            className="topnav-item"
+            onClick={onShowShortcuts}
+            title="Keyboard shortcuts (press ?)"
+            aria-label="Keyboard shortcuts"
+          >
+            <Icon name="keyboard" />
+          </button>
+        )}
+        <button
+          className="topnav-item"
+          onClick={toggle}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          <Icon name={theme === "dark" ? "sun" : "moon"} />
+        </button>
         <button
           className="topnav-item topnav-account"
           onClick={() => setMenuOpen((open) => !open)}
