@@ -6,6 +6,7 @@ database already has zones, this does nothing.
 """
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import models
@@ -80,4 +81,10 @@ def seed_if_empty(db: Session) -> None:
         ]
         db.add(zone)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two server instances can start at the same time and both find the
+        # database empty. The unique constraints stop the duplicate rows; we
+        # just roll back and let the other one's data stand.
+        db.rollback()

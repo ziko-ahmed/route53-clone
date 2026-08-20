@@ -41,7 +41,13 @@ app.include_router(transfer.router)
 
 @app.on_event("startup")
 def startup() -> None:
-    """Create the tables if they do not exist, then add sample data once."""
+    """
+    Create the tables if they do not exist, then add sample data once.
+
+    Safe to run repeatedly: create_all skips tables that already exist, and
+    seeding is a no-op once there is any data. That matters on serverless
+    hosts, where this runs on every cold start rather than once.
+    """
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         seed_if_empty(db)

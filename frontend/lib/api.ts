@@ -7,7 +7,14 @@
 
 import type { DnsRecord, HostedZone, ImportResult, Page, RecordType, User } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Trailing slashes are stripped deliberately. Every path below starts with
+// "/", so a base of "https://api.example.com/" would produce a double slash.
+// Hosts answer that with a redirect, and a CORS preflight is not allowed to
+// follow redirects -- which fails as a confusing CORS error rather than a 404.
+const BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(
+  /\/+$/,
+  "",
+);
 
 const TOKEN_KEY = "route53-clone-token";
 
